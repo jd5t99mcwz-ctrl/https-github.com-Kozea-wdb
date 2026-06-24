@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  wdb:
+    build: .
+    ports:
+      - "1984:1984"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
