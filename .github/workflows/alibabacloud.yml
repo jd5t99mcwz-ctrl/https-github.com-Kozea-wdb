@@ -25,18 +25,18 @@ on:
 
 # Environment variables available to all jobs and steps in this workflow.
 env:
-  REGION_ID: cn-hangzhou
-  REGISTRY: registry.cn-hangzhou.aliyuncs.com
-  NAMESPACE: namespace
-  IMAGE: repo
+  REGION_ID: ${{ vars.ALIBABA_REGION_ID || 'cn-hangzhou' }}
+  REGISTRY: ${{ vars.ACR_REGISTRY }}
+  NAMESPACE: ${{ vars.ACR_NAMESPACE }}
+  IMAGE: ${{ vars.ACR_IMAGE }}
   TAG: ${{ github.sha }}
-  ACK_CLUSTER_ID: clusterID
-  ACK_DEPLOYMENT_NAME: nginx-deployment
+  ACK_CLUSTER_ID: ${{ vars.ACK_CLUSTER_ID }}
+  ACK_DEPLOYMENT_NAME: ${{ vars.ACK_DEPLOYMENT_NAME }}
 
-  ACR_EE_REGISTRY: myregistry.cn-hangzhou.cr.aliyuncs.com
-  ACR_EE_INSTANCE_ID: instanceID
-  ACR_EE_NAMESPACE: namespace
-  ACR_EE_IMAGE: repo
+  ACR_EE_REGISTRY: ${{ vars.ACR_EE_REGISTRY }}
+  ACR_EE_INSTANCE_ID: ${{ vars.ACR_EE_INSTANCE_ID }}
+  ACR_EE_NAMESPACE: ${{ vars.ACR_EE_NAMESPACE }}
+  ACR_EE_IMAGE: ${{ vars.ACR_EE_IMAGE }}
   ACR_EE_TAG: ${{ github.sha }}
 
 permissions:
@@ -53,8 +53,26 @@ jobs:
       with:
         persist-credentials: false
 
+    - name: Check deployment configuration
+      id: config
+      run: |
+        required=(REGISTRY NAMESPACE IMAGE ACK_CLUSTER_ID ACK_DEPLOYMENT_NAME)
+        missing=()
+        for name in "${required[@]}"; do
+          if [ -z "${!name}" ]; then
+            missing+=("$name")
+          fi
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "Skipping deployment workflow because required repository variables are missing: ${missing[*]}"
+        else
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+        fi
+
     # 1.1 Login to ACR
     - name: Login to ACR with the AccessKey pair
+      if: steps.config.outputs.ready == 'true'
       uses: aliyun/acr-login@v1
       with:
         region-id: "${{ env.REGION_ID }}"
@@ -63,12 +81,14 @@ jobs:
 
     # 1.2 Build and push image to ACR
     - name: Build and push image to ACR
+      if: steps.config.outputs.ready == 'true'
       run: |
         docker build --tag "$REGISTRY/$NAMESPACE/$IMAGE:$TAG" .
         docker push "$REGISTRY/$NAMESPACE/$IMAGE:$TAG"
 
     # 1.3 Scan image in ACR
     - name: Scan image in ACR
+      if: steps.config.outputs.ready == 'true'
       uses: aliyun/acr-scan@v1
       with:
         region-id: "${{ env.REGION_ID }}"
@@ -79,9 +99,11 @@ jobs:
 
     # 2.1 (Optional) Login to ACR EE
     - uses: actions/checkout@v4
+      if: steps.config.outputs.ready == 'true' && env.ACR_EE_REGISTRY != '' && env.ACR_EE_INSTANCE_ID != '' && env.ACR_EE_NAMESPACE != '' && env.ACR_EE_IMAGE != ''
       with:
         persist-credentials: false
     - name: Login to ACR EE with the AccessKey pair
+      if: steps.config.outputs.ready == 'true' && env.ACR_EE_REGISTRY != '' && env.ACR_EE_INSTANCE_ID != '' && env.ACR_EE_NAMESPACE != '' && env.ACR_EE_IMAGE != ''
       uses: aliyun/acr-login@v1
       with:
         login-server: "https://${{ env.ACR_EE_REGISTRY }}"
@@ -92,11 +114,13 @@ jobs:
 
     # 2.2 (Optional) Build and push image ACR EE
     - name: Build and push image to ACR EE
+      if: steps.config.outputs.ready == 'true' && env.ACR_EE_REGISTRY != '' && env.ACR_EE_INSTANCE_ID != '' && env.ACR_EE_NAMESPACE != '' && env.ACR_EE_IMAGE != ''
       run: |
         docker build -t "$ACR_EE_REGISTRY/$ACR_EE_NAMESPACE/$ACR_EE_IMAGE:$TAG" .
         docker push "$ACR_EE_REGISTRY/$ACR_EE_NAMESPACE/$ACR_EE_IMAGE:$TAG"
     # 2.3 (Optional) Scan image in ACR EE
     - name: Scan image in ACR EE
+      if: steps.config.outputs.ready == 'true' && env.ACR_EE_REGISTRY != '' && env.ACR_EE_INSTANCE_ID != '' && env.ACR_EE_NAMESPACE != '' && env.ACR_EE_IMAGE != ''
       uses: aliyun/acr-scan@v1
       with:
         region-id: "${{ env.REGION_ID }}"
@@ -108,6 +132,7 @@ jobs:
 
     # 3.1 Set ACK context
     - name: Set K8s context
+      if: steps.config.outputs.ready == 'true'
       uses: aliyun/ack-set-context@v1
       with:
         access-key-id: "${{ secrets.ACCESS_KEY_ID }}"
@@ -116,9 +141,11 @@ jobs:
 
     # 3.2 Deploy the image to the ACK cluster
     - name: Set up Kustomize
+      if: steps.config.outputs.ready == 'true'
       run: |-
         curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash /dev/stdin 3.8.6
     - name: Deploy
+      if: steps.config.outputs.ready == 'true'
       run: |-
         ./kustomize edit set image REGISTRY/NAMESPACE/IMAGE:TAG=$REGISTRY/$NAMESPACE/$IMAGE:$TAG
         ./kustomize build . | kubectl apply -f -
