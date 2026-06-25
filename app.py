@@ -5,6 +5,6 @@ A simple web debugger application
 """
 
 if __name__ == '__main__':
-    # Start the WDB server
-    import wdb.server
-    wdb.server.run()
+    # Start the WDB debugger
+    from wdb.__main__ import main
+    main()
